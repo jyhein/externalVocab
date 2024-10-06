@@ -1,0 +1,1 @@
+# External Vocab Plugin Template
