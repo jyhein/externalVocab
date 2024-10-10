@@ -14,11 +14,10 @@
 namespace APP\plugins\generic\externalVocab;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Promise;
 
 use APP\core\Application;
 use PKP\plugins\GenericPlugin;
-use PKP\core\JSONMessage;
-use PKP\linkAction\request\AjaxModal;
 use PKP\plugins\Hook;
 use PKP\submission\SubmissionKeywordDAO;
 
@@ -29,15 +28,17 @@ class ExternalVocabPlugin extends GenericPlugin
      * Constants
      */
 
-    // Define which languages are supported in the vocabulary
-    const ALLOWED_LANGS = ['fi', 'sv', 'en'];
+    // Define which vocabularies are supported, and the languages in them
+    const ALLOWED_VOCABS_AND_LANGS = [
+        SubmissionKeywordDAO::CONTROLLED_VOCAB_SUBMISSION_KEYWORD => ['fi', 'sv', 'en'],
+    ];
 
 
     /**
      * Public 
      */
 
-    // Generic Plugin methods
+    // GenericPlugin methods
 
     public function register($category, $path, $mainContextId = null)
     {
@@ -99,12 +100,12 @@ class ExternalVocabPlugin extends GenericPlugin
         $response = $args[6];
         $request = $args[7];
 
-        // Here we define which form field the plugin is triggered in. In this case Keywords field.
+        // Here we define which form field the plugin is triggered in.
         // You can also define the language is the specific field while some vocabularies might only work
         // with specific languages.
         // Note that the current development version of the core only supports extending Keywords.
-        // However, this will be extended to other fields as well, like Discipline, as well.
-        if ($vocab !== SubmissionKeywordDAO::CONTROLLED_VOCAB_SUBMISSION_KEYWORD || !in_array($locale, self::ALLOWED_LANGS)) {
+        // However, this will be extended to other fields as well, like Discipline.
+        if (!isset(self::ALLOWED_VOCABS_AND_LANGS[$vocab]) || !in_array($locale, self::ALLOWED_VOCABS_AND_LANGS[$vocab])) {
             return false;
         }
 
@@ -115,9 +116,13 @@ class ExternalVocabPlugin extends GenericPlugin
         // from the external vocabulary and only show those results as suggestions.
         // If you want to show also suggestions from existing keywords in your own database
         // this is where we can make that decision.
-        for ($i = 0, $len = count($resultData); $i < $len; $i++) {
-            $data[$i] = $resultData[$i];
+
+        if (!$resultData) {
+            $data = [];
+            return false;
         }
+
+        $data = $resultData;
 
         return false;
     }
@@ -126,8 +131,8 @@ class ExternalVocabPlugin extends GenericPlugin
      * Private
      */
 
-    private function fetchData(?string $term, string $locale): array {
-
+    private function fetchData(?string $term, string $locale): array
+    {
         // You might want to consider sanitazing the search term before it is 
         // passed to an API or used to search within a local file
         $termSanitized = $term ?? "";
@@ -139,6 +144,7 @@ class ExternalVocabPlugin extends GenericPlugin
 
         // The following example connects to an external vocabulary called Finto
         // using an open REST API and Guzzle HTTP Client.
+        // More than one is supported, and the results are grouped by the vocabulary service.
         // This is the part of the code that can vary depending on the vocabulary used.
         // You could rewrite the code to support another REST API based vocabulary or to 
         // interact with a local file for example in the plugin folder. This might work
@@ -146,35 +152,56 @@ class ExternalVocabPlugin extends GenericPlugin
         // of keywords locally.
 
         $client = new Client();
-        $response = $client->request(
-            'GET',
-            "https://api.finto.fi/rest/v1/search?vocab=koko&query=$termSanitized*&lang=$locale",
-            [
-                'headers' => [
-                    'Accept' => 'application/json',
-                    'Content-type' => 'application/json'
-                ],
-            ]
-        );
+        $promises = [
+            'finto' => $client->requestAsync(
+                'GET',
+                "https://api.finto.fi/rest/v1/search",
+                [
+                    'headers' => [
+                        'Accept' => 'application/json',
+                        'Content-type' => 'application/json'
+                    ],
+                    'timeout'  => 3.13,
+                    'query' => [
+                        'vocab' => 'koko',
+                        'query' => "$termSanitized*",
+                        'lang' => $locale,
+                        'maxhits' => 10,
+                    ],
+                ]
+            ),
+        ];
+        $responses = Promise\Utils::settle($promises)->wait();
 
-        if ($response->getStatusCode() !== 200) {
-            return [];
-        }
+        return collect($responses)
+            ->reduce(function (array $data, array $response, string $service): array {
+                if (isset($response['value']) && $response['value']->getStatusCode() === 200) {
+                    // $this->{$service}: '$service' is the '$promises' array key, e.g. 'finto' ( $this->finto(...) )
+                    // You might want to consider sanitazing the suggestions before they are returned from the function '$this->{$service}'
+                    array_push($data, ...$this->{$service}(json_decode($response['value']->getBody()->getContents(), true)));
+                }
+                return $data;
+            }, []);
+    }
 
-        $data = json_decode($response->getBody()->getContents(), true)['results'] ?? [];
+    /**
+     * Functions for vocabularies
+     */
 
-        return collect($data)
+    private function finto(?array $responseContents)
+    {
+        return collect($responseContents['results'] ?? [])
             ->unique('uri')
             ->filter()
             ->map(fn (array $d): array =>
-            [
+                [
                     'term' => $d['prefLabel'],
-                    'label' => "{$d['prefLabel']} [ {$d['uri']} ]",
-                    'uri' => $d['uri'], // this is the unique identifier that will be stored separately
+                    'label' => "{$d['prefLabel']} [ {$d['uri']} ]" /** This is the optional custom label that will be stored separately */,
+                    'uri' => $d['uri'] /** This is the optional unique identifier that will be stored separately */,
                     /* Extra items here */
-            ])
+                    'service' => 'finto',
+                ])
             ->values()
             ->toArray();
-
     }
 }
