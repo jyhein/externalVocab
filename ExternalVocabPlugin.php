@@ -115,11 +115,6 @@ class ExternalVocabPlugin extends GenericPlugin
         // from the external vocabulary and only show those results as suggestions.
         // If you want to show also suggestions from existing keywords in your own database
         // this is where we can make that decision.
-        if (!$resultData) {
-            $data = [];
-            return false;
-        }
-
         for ($i = 0, $len = count($resultData); $i < $len; $i++) {
             $data[$i] = $resultData[$i];
         }
