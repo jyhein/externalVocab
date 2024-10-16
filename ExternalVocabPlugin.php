@@ -19,7 +19,10 @@ use GuzzleHttp\Promise;
 use APP\core\Application;
 use PKP\plugins\GenericPlugin;
 use PKP\plugins\Hook;
+use PKP\submission\SubmissionAgencyDAO;
+use PKP\submission\SubmissionDisciplineDAO;
 use PKP\submission\SubmissionKeywordDAO;
+use PKP\submission\SubmissionSubjectDAO;
 
 class ExternalVocabPlugin extends GenericPlugin
 {
@@ -30,9 +33,11 @@ class ExternalVocabPlugin extends GenericPlugin
 
     // Define which vocabularies are supported, and the languages in them
     const ALLOWED_VOCABS_AND_LANGS = [
+        SubmissionAgencyDAO::CONTROLLED_VOCAB_SUBMISSION_AGENCY => [],
+        SubmissionDisciplineDAO::CONTROLLED_VOCAB_SUBMISSION_DISCIPLINE => ['fi', 'sv', 'en'],
         SubmissionKeywordDAO::CONTROLLED_VOCAB_SUBMISSION_KEYWORD => ['fi', 'sv', 'en'],
+        SubmissionSubjectDAO::CONTROLLED_VOCAB_SUBMISSION_SUBJECT => ['fi', 'sv', 'en'],
     ];
-
 
     /**
      * Public 
@@ -110,7 +115,7 @@ class ExternalVocabPlugin extends GenericPlugin
         }
 
         // We call the fetchData function will handle the interaction with the vocabulary
-        $resultData = $this->fetchData($term, $locale);
+        $resultData = $this->fetchData($term, $locale, $vocab);
 
         // We replace the vocabulary data coming from the OJS database with fetched data
         // from the external vocabulary and only show those results as suggestions.
@@ -131,11 +136,14 @@ class ExternalVocabPlugin extends GenericPlugin
      * Private
      */
 
-    private function fetchData(?string $term, string $locale): array
+    /**
+     * @return [ [ 'term' => string, 'label' => ?string, 'identifier' =>  ?string, ... ], ... ]
+     */
+    private function fetchData(?string $term, string $locale, string $vocab): array
     {
         // You might want to consider sanitazing the search term before it is 
         // passed to an API or used to search within a local file
-        $termSanitized = $term ?? "";
+        $termSanitized = $this->sanitizeTerm($term);
 
         // Here we can set the minimum length for the word that is used for the query
         if (strlen($termSanitized) < 3) {
@@ -151,9 +159,63 @@ class ExternalVocabPlugin extends GenericPlugin
         // for smaller vocabularies and could be also used easily to define a strict set
         // of keywords locally.
 
-        $client = new Client();
-        $promises = [
-            'finto' => $client->requestAsync(
+        return match ($vocab) {
+            SubmissionAgencyDAO::CONTROLLED_VOCAB_SUBMISSION_AGENCY => $this->agency($termSanitized, $locale),
+            SubmissionDisciplineDAO::CONTROLLED_VOCAB_SUBMISSION_DISCIPLINE => $this->discipline($termSanitized, $locale),
+            SubmissionKeywordDAO::CONTROLLED_VOCAB_SUBMISSION_KEYWORD,
+                SubmissionSubjectDAO::CONTROLLED_VOCAB_SUBMISSION_SUBJECT => $this->keyword($termSanitized, $locale),
+        };
+    }
+
+    /**
+     * Functions for vocabularies
+     */
+
+    private function agency(string $termSanitized, string $locale): array
+    {
+        return [];
+    }
+
+    private function discipline(string $termSanitized, string $locale): array
+    {
+        // Finto supports fi, sv, en
+        $finto = [
+            'callback' => 'finto',
+            'requestParams' => [
+                'GET',
+                "https://api.finto.fi/rest/v1/search",
+                [
+                    'headers' => [
+                        'Accept' => 'application/json',
+                        'Content-type' => 'application/json'
+                    ],
+                    'timeout'  => 3.13,
+                    'query' => [
+                        'vocab' => 'koko',
+                        'query' => "$termSanitized*",
+                        'lang' => $locale,
+                        'type' => 'skos:Concept',
+                        'parent' => 'http://www.yso.fi/onto/koko/p30642',
+                        'maxhits' => 10,
+                        'unique' => true,
+                    ],
+                ],
+            ],
+        ];
+
+        $requests = [
+            'fintoKoko' => $finto,
+        ];
+
+        return $this->getResponses($requests);
+    }
+
+    private function keyword(string $termSanitized, string $locale): array
+    {
+        // Finto supports fi, sv, en
+        $finto = [
+            'callback' => 'finto',
+            'requestParams' => [
                 'GET',
                 "https://api.finto.fi/rest/v1/search",
                 [
@@ -168,40 +230,81 @@ class ExternalVocabPlugin extends GenericPlugin
                         'lang' => $locale,
                         'maxhits' => 10,
                     ],
-                ]
-            ),
+                ],
+            ],
         ];
-        $responses = Promise\Utils::settle($promises)->wait();
 
-        return collect($responses)
-            ->reduce(function (array $data, array $response, string $service): array {
-                if (isset($response['value']) && $response['value']->getStatusCode() === 200) {
-                    // $this->{$service}: '$service' is the '$promises' array key, e.g. 'finto' ( $this->finto(...) )
-                    // You might want to consider sanitazing the suggestions before they are returned from the function '$this->{$service}'
-                    array_push($data, ...$this->{$service}(json_decode($response['value']->getBody()->getContents(), true)));
-                }
-                return $data;
-            }, []);
+        $requests = [
+            'fintoKoko' => $finto,
+        ];
+
+        return $this->getResponses($requests);
+    }
+
+    private function subject(string $termSanitized, string $locale): array
+    {
+        return [];
     }
 
     /**
-     * Functions for vocabularies
+     * Functions for responses
      */
 
-    private function finto(?array $responseContents)
+    private function getResponses(array $requests): array
+    {
+        $requests = collect($requests);
+        $client = new Client();
+        $responses = Promise\Utils::settle($requests
+                ->map(fn ($req) => $client->requestAsync(...$req['requestParams']))
+                ->toArray())
+            ->wait();
+
+        return $requests
+            ->map(function (array $request, string $key) use ($responses): array {
+                $response = $responses[$key]['value'] ?? null;
+                if ($response?->getStatusCode() === 200) {
+                    // $this->{$request['callback']}: e.g. 'finto' ( $this->finto(...) ).
+                    // You might want to consider sanitazing the suggestions before they are returned from the function.
+                    return $this->{$request['callback']}(json_decode($response->getBody()->getContents(), true));
+                }
+                return [];
+            })
+            ->flatten(1)
+            ->toArray();
+    }
+
+    private function finto(?array $responseContents): array
     {
         return collect($responseContents['results'] ?? [])
             ->unique('uri')
             ->filter()
-            ->map(fn (array $d): array =>
-                [
-                    'term' => $d['prefLabel'],
-                    'label' => "{$d['prefLabel']} [ {$d['uri']} ]" /** This is the optional custom label that will be stored separately */,
-                    'uri' => $d['uri'] /** This is the optional unique identifier that will be stored separately */,
-                    /* Extra items here */
+            ->map(function (array $d): array {
+                $term = $this->sanitizeTerm($d['prefLabel']);
+                $uri = $this->regexMatch("#^http://www\.yso\.fi/#", $this->sanitizeTerm($d['uri']));
+                return [
+                    'term' => $term /* Required */,
+                    'label' => $term . ($uri ? " [ $uri ]" : "") /* This is the optional custom label that will be stored separately */,
+                    'identifier' => $uri /* This is the optional unique identifier, e.g. uri, that will be stored separately */,
+                    /* Optional extra items here */
                     'service' => 'finto',
-                ])
+                ];
+            })
             ->values()
             ->toArray();
+    }
+
+    /**
+     * Aux functions
+     */
+
+    private function regexMatch(string $pattern, string $subject, string $default = null): ?string
+    {
+        return preg_match($pattern, $subject) ? $subject : $default;
+    }
+
+    private function sanitizeTerm(?string $term): string
+    {
+        $term ??= "";
+        return preg_replace("/\n\r\t\v\x00/", "", trim(strip_tags($term))) ?? "";
     }
 }
