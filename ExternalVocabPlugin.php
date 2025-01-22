@@ -19,10 +19,7 @@ use GuzzleHttp\Promise;
 use APP\core\Application;
 use PKP\plugins\GenericPlugin;
 use PKP\plugins\Hook;
-use PKP\submission\SubmissionAgencyDAO;
-use PKP\submission\SubmissionDisciplineDAO;
-use PKP\submission\SubmissionKeywordDAO;
-use PKP\submission\SubmissionSubjectDAO;
+use PKP\controlledVocab\ControlledVocab;
 
 class ExternalVocabPlugin extends GenericPlugin
 {
@@ -33,10 +30,10 @@ class ExternalVocabPlugin extends GenericPlugin
 
     // Define which vocabularies are supported, and the languages in them
     const ALLOWED_VOCABS_AND_LANGS = [
-        SubmissionAgencyDAO::CONTROLLED_VOCAB_SUBMISSION_AGENCY => [],
-        SubmissionDisciplineDAO::CONTROLLED_VOCAB_SUBMISSION_DISCIPLINE => ['fi', 'sv', 'en'],
-        SubmissionKeywordDAO::CONTROLLED_VOCAB_SUBMISSION_KEYWORD => ['fi', 'sv', 'en'],
-        SubmissionSubjectDAO::CONTROLLED_VOCAB_SUBMISSION_SUBJECT => ['fi', 'sv', 'en'],
+        ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_AGENCY => [],
+        ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_DISCIPLINE => ['fi', 'sv', 'en'],
+        ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_KEYWORD => ['fi', 'sv', 'en'],
+        ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_SUBJECT => ['fi', 'sv', 'en'],
     ];
 
     /**
@@ -152,7 +149,7 @@ class ExternalVocabPlugin extends GenericPlugin
 
         // The following example connects to an external vocabulary called Finto
         // using an open REST API and Guzzle HTTP Client.
-        // More than one is supported, and the results are grouped by the vocabulary service.
+        // More than one is supported, and the results are grouped by the vocabulary source.
         // This is the part of the code that can vary depending on the vocabulary used.
         // You could rewrite the code to support another REST API based vocabulary or to 
         // interact with a local file for example in the plugin folder. This might work
@@ -160,10 +157,10 @@ class ExternalVocabPlugin extends GenericPlugin
         // of keywords locally.
 
         return match ($vocab) {
-            SubmissionAgencyDAO::CONTROLLED_VOCAB_SUBMISSION_AGENCY => $this->agency($termSanitized, $locale),
-            SubmissionDisciplineDAO::CONTROLLED_VOCAB_SUBMISSION_DISCIPLINE => $this->discipline($termSanitized, $locale),
-            SubmissionKeywordDAO::CONTROLLED_VOCAB_SUBMISSION_KEYWORD,
-                SubmissionSubjectDAO::CONTROLLED_VOCAB_SUBMISSION_SUBJECT => $this->keyword($termSanitized, $locale),
+            ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_AGENCY => $this->agency($termSanitized, $locale),
+            ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_DISCIPLINE => $this->discipline($termSanitized, $locale),
+            ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_KEYWORD,
+                ControlledVocab::CONTROLLED_VOCAB_SUBMISSION_SUBJECT => $this->keyword($termSanitized, $locale),
         };
     }
 
@@ -285,8 +282,7 @@ class ExternalVocabPlugin extends GenericPlugin
                     'term' => $term /* Required */,
                     'label' => $term . ($uri ? " [ $uri ]" : "") /* This is the optional custom label that will be stored separately */,
                     'identifier' => $uri /* This is the optional unique identifier, e.g. uri, that will be stored separately */,
-                    /* Optional extra items here */
-                    'service' => 'finto',
+                    'source' => 'finto' /* This is the optional source that is REQUIRED if identifier is used */,
                 ];
             })
             ->values()
