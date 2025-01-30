@@ -17,9 +17,10 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Promise;
 
 use APP\core\Application;
+use PKP\controlledVocab\ControlledVocab;
+use PKP\controlledVocab\ControlledVocabEntry;
 use PKP\plugins\GenericPlugin;
 use PKP\plugins\Hook;
-use PKP\controlledVocab\ControlledVocab;
 
 class ExternalVocabPlugin extends GenericPlugin
 {
@@ -279,10 +280,10 @@ class ExternalVocabPlugin extends GenericPlugin
                 $term = $this->sanitizeTerm($d['prefLabel']);
                 $uri = $this->regexMatch("#^http://www\.yso\.fi/#", $this->sanitizeTerm($d['uri']));
                 return [
-                    'term' => $term /* Required */,
+                    'name' => $term /* Required */,
                     'label' => $term . ($uri ? " [ $uri ]" : "") /* This is the optional custom label that will be stored separately */,
-                    'identifier' => $uri /* This is the optional unique identifier, e.g. uri, that will be stored separately */,
-                    'source' => 'finto' /* This is the optional source that is REQUIRED if identifier is used */,
+                    ControlledVocabEntry::CONTROLLED_VOCAB_ENTRY_IDENTIFIER => $uri /* This is the optional unique identifier, e.g. uri, that will be stored separately */,
+                    ControlledVocabEntry::CONTROLLED_VOCAB_ENTRY_SOURCE => 'finto' /* This is the optional source that is REQUIRED if identifier is used */,
                 ];
             })
             ->values()
