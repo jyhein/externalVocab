@@ -92,17 +92,8 @@ class ExternalVocabPlugin extends GenericPlugin
      * Public
      */
 
-    public function setData(string $hookName, array $args): bool
+    public function setData(string $hookName, string $vocab, ?string $term, string $locale, array &$data, &$entries, $illuminateRequest, $response, $request): bool
     {
-        $vocab = $args[0];
-        $term = $args[1];
-        $locale = $args[2];
-        $data = &$args[3];
-        $entries = &$args[4];
-        $illuminateRequest = $args[5];
-        $response = $args[6];
-        $request = $args[7];
-
         // Here we define which form field the plugin is triggered in.
         // You can also define the language is the specific field while some vocabularies might only work
         // with specific languages.
